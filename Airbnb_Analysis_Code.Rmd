@@ -1,0 +1,591 @@
+---
+title: "R Notebook"
+output: html_notebook
+BUSINFO707
+Group1
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+Libraries and files set up
+```{r}
+# Load all packages
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(dplyr)
+library(tidyr)
+library(car)
+library(stringr)
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(ggmap)
+library(GGally)
+library(corrplot)
+library(readxl)
+```
+
+
+Retrieve Jan 2023 data & Input external data resources
+```{r}
+# Import data
+
+listing <- read.csv('listings_detailed.csv')
+
+
+```
+
+
+Data exploration
+
+```{r}
+
+str(listing)
+data_types <- unique(sapply(listing, class))
+data_types
+# The dataset contains 42323 observations with 80 attributes.
+
+# There are three types of variables: numeric, character and logical.
+sum(sapply(listing, is.logical))
+sum(sapply(listing, is.numeric))
+sum(sapply(listing, is.character))
+```
+
+
+Filtering logical variables
+```{r}
+# Select columns that are logical
+logical_cols <- select_if(listing, is.logical)
+
+# Get a summary of the logical columns
+summary(logical_cols)
+
+listing2 <- select_if(listing,function(x) !is.logical(x))
+```
+
+
+Exploration on the dependent variable - Price
+```{r}
+# Overview of price
+summary(listing2$price)
+
+# Price is character data, remove "$" and change it to numeric values. 
+listing2$price <- as.numeric(gsub("[\\$,]", "", listing2$price))
+summary(listing2$price)
+
+# Histogram of price
+## set plot arrangements
+layout(mat = matrix(c(1,2), 2,1, byrow = TRUE), height = c(3,10))
+
+## Draw the boxplot and the histogram 
+par(mar = c(0, 3.1, 3.1, 2.1))
+boxplot(listing2$price, horizontal = TRUE, xaxt = "n", col = "#FF5A5F", frame = F, 
+        main = "Histogram and Boxplot for Listing Price", cex = 0.5)
+par(mar = c(5, 5.1, 1.1, 2.1), tcl = -0.2, cex.axis = 0.7, cex.lab = 0.7)
+hist(listing2$price, breaks = 40, col = "#FF5A5F", 
+     border = F, main = "", xlab= "Listing Price")
+title(line = 3.5, 
+      cex.sub = 0.5, font.sub = 3, col.sub = "grey60", adj = 1)
+
+# The histogram of price is not normally distributed and the boxpolt shows the outliers skewing the distribution. Therefore, We subset listings's within 1%-99% price range. 
+q <- quantile(listing2$price, probs = c(0.01, 0.99))
+listing2 <- subset(listing2, price > q[1] & price < q[2])
+
+## set plot arrangements
+layout(mat = matrix(c(1,2), 2,1, byrow = TRUE), height = c(3,10))
+
+## Draw the boxplot and the histogram 
+par(mar = c(0, 3.1, 3.1, 2.1))
+boxplot(listing2$price, horizontal = TRUE, xaxt = "n", col = "#FF5A5F", frame = F, 
+        main = "Histogram and Boxplot for Listing Price", cex = 0.5)
+par(mar = c(5, 5.1, 1.1, 2.1), tcl = -0.2, cex.axis = 0.7, cex.lab = 0.7)
+hist(listing2$price, breaks = 40, col = "#FF5A5F", 
+     border = F, main = "", xlab= "Listing Price")
+title(line = 3.5, 
+      cex.sub = 0.5, font.sub = 3, col.sub = "grey60", adj = 1)
+
+# The distribution of price is still not normal, but log(price) is
+## set plot arrangements
+layout(mat = matrix(c(1,2), 2,1, byrow = TRUE), height = c(3,10))
+
+## Draw the boxplot and the histogram 
+par(mar = c(0, 3.1, 3.1, 2.1))
+boxplot(log(listing2$price), horizontal = TRUE, xaxt = "n", col = "#FF5A5F", frame = F, 
+        main = "Histogram and Boxplot for Listing Price", cex = 0.5)
+par(mar = c(5, 5.1, 1.1, 2.1), tcl = -0.2, cex.axis = 0.7, cex.lab = 0.7)
+hist(log(listing2$price), breaks = 40, col = "#FF5A5F", 
+     border = F, main = "", xlab= "Listing Price")
+title(line = 3.5, 
+      cex.sub = 0.5, font.sub = 3, col.sub = "grey60", adj = 1)
+```
+
+Filtering numeric variables
+```{r}
+# Summary of numeric variables
+numeric_cols <- select_if(listing2, is.numeric)
+summary(numeric_cols)
+
+# Remove some numeric variables
+listing2 <- listing2 %>% select(-scrape_id,-host_id,-region_id,-region_parent_id,-minimum_maximum_nights,-minimum_minimum_nights,-minimum_nights_avg_ntm,-maximum_minimum_nights,-maximum_maximum_nights,-maximum_nights_avg_ntm)
+```
+
+Filtering character variables
+```{r}
+# Summary of character variables
+character_cols <- select_if(listing2, is.character)
+summary(character_cols)
+
+# Remove some character variables
+listing2 <- listing2 %>% select(-contains("url"),-last_scraped,-last_searched,-host_name,-host_neighbourhood,-host_location,-neighbourhood,has_availability,-calendar_last_scraped)
+```
+
+Data transformation
+
+1. Convert host_since to years, first_review, last_review to days
+```{r}
+listing2$host_since <- as.Date(listing2$host_since)
+listing2$first_review <- as.Date(listing2$first_review)
+listing2$last_review <- as.Date(listing2$last_review)
+
+# Calculate years/days to a specific date
+target_date <- as.Date("2023-01-15")
+listing2$host_since <- as.integer((target_date - as.Date(listing2$host_since))/365)
+listing2$first_review <- as.integer(difftime(target_date, listing2$first_review, units = "days"))
+listing2$last_review <- as.integer(difftime(target_date, listing2$last_review, units = "days"))
+```
+
+2. Identify and convert Boolean columns
+```{r}
+tf_cols <- sapply(listing2, function(x) all(unique(x) %in% c("t", "f")))
+tf_cols
+
+# Convert t/f values to Boolean
+listing2[tf_cols] <- lapply(listing2[tf_cols], function(x) as.integer(x == "t"))
+
+
+# host_is_superhost should be boolean value, but there are blank values, so convert it to factor first here, we should consider to remove blank values and convert to boolean
+listing2$host_is_superhost <- factor(listing2$host_is_superhost)
+summary(listing2$host_is_superhost)##need to delete 0 length listings
+```
+3. Convert host verification to number of verification, amenities to number of amenities
+```{r}
+#host verification
+listing2$host_verifications <- sapply(listing2$host_verifications, function(x) length(strsplit(x, ",")[[1]]))
+
+#amenities
+listing2$amenities <- sapply(listing2$amenities, function(x) length(strsplit(x, ",")[[1]]))
+```
+
+4. Convert room_type and host_resp_time,property_type,region_name,region_parent_name to factors
+```{r}
+#room_type
+listing2$room_type <- factor(listing2$room_type)
+summary(listing2$room_type)
+
+#host_response_time
+listing2$host_response_time <- factor(listing2$host_response_time)
+summary(listing2$host_response_time)
+
+#property_type
+listing2$property_type <- factor(listing2$property_type)
+summary(listing2$property_type)
+#region_name
+listing2$region_name<- factor(listing2$region_name)
+summary(listing2$region_name)
+#region_parent_name
+listing2$region_parent_name<- factor(listing2$region_parent_name)
+summary(listing2$region_parent_name)
+
+listing2 %>% group_by(host_response_time) %>% 
+               summarise(price=mean(price))
+```
+
+5. Convert host_response_rate & host_acceptance_rate to numeric
+```{r}
+listing2$host_response_rate <- as.numeric(gsub("%", "", listing2$host_response_rate))
+listing2$host_acceptance_rate <- as.numeric(gsub("%", "", listing2$host_acceptance_rate))
+
+summary(listing2$host_acceptance_rate)
+summary(listing2$host_response_rate)
+```
+
+6. Convert character columns in a data frame into its respective lengths and then to numeric format
+```{r}
+listing2$name <- nchar(listing2$name)
+# Convert original column to numeric format
+listing2$name <- as.numeric(listing2$name)
+
+listing2$description <- nchar(listing2$description)
+# Convert original column to numeric format
+listing2$description <- as.numeric(listing2$description)
+
+listing2$neighborhood_overview <- nchar(listing2$neighborhood_overview)
+# Convert original column to numeric format
+listing2$neighborhood_overview <- as.numeric(listing2$neighborhood_overview)
+
+listing2$host_about <- nchar(listing2$host_about)
+# Convert original column to numeric format
+listing2$host_about <- as.numeric(listing2$host_about)
+```
+
+7. Convert bathroom_text
+```{r}
+# Bathroom_text contains information about no.of bathrooms and the bathroom type, separate bathroom_text into bathroom number and bathroom type
+listing2 <- extract(listing2, bathrooms_text, into = c("bathroom_number", "bathroom_type"), regex = "^([0-9\\.]+)\\s+(.*)$")
+
+# Convert numeric column to numeric format
+listing2$bathroom_number <- as.numeric(listing2$bathroom_number)
+
+#Change missing values into 0
+listing2$bathroom_number[is.na(listing2$bathroom_number)] <- 0
+
+listing2$bathroom_type <- gsub("baths", "bath", listing2$bathroom_type)
+listing2$bathroom_type <- gsub("shared baths", "shared bath", listing2$bathroom_type)
+listing2$bathroom_type <- factor(listing2$bathroom_type)
+summary(listing2$bathroom_type)
+
+```
+8. Adding external data sources
+```{r}
+
+# count the number of observations for each property type
+property_counts <- table(listing2$property_type)
+
+
+# extract the property types
+selected_properties <- names(property_counts)
+unique_properties <- unique(selected_properties)
+print(unique_properties)
+
+# write the selected property types to a CSV file
+write.csv(selected_properties, "allPropertyTypes.csv", row.names = FALSE, fileEncoding = "UTF-8")
+
+
+
+#Count the number of observations for each regions
+region_counts <- table(listing2$region_name)
+
+#Extract Unique Regions
+selected_regions <- names(region_counts)
+
+unique_regions <- unique(selected_regions)
+print(unique_regions)
+
+# Write regions to CSV file
+Region <- write.csv(unique_regions, "unique_region.csv", row.names = FALSE,  fileEncoding = "UTF-8")
+
+region_parent_counts <- table(listing2$region_parent_name)
+selected_properties <- names(region_parent_counts)
+unique_region_parent <- unique(selected_properties)
+parent_region<- write.csv(unique_region_parent, "unique_region_parent.csv", row.names = FALSE,  fileEncoding = "UTF-8")
+print(unique_region_parent)
+stay <- read_excel("property_type.xlsx")
+
+urban_rural <- read_excel("urbanvsrural.xlsx")
+
+tourism <- read_excel("tourism.xlsx")
+
+TECT <- read_excel("TECTs.xlsx")
+
+
+listing2 <- merge( listing2,stay, by = "property_type", all.x = TRUE)
+
+listing2 <- merge(listing2, urban_rural, by = "region_name", all.x = TRUE)
+
+listing2 <- merge(tourism, listing2, by = "region_parent_name", all.x = TRUE)
+
+listing2 <- merge(TECT, listing2, by = "region_parent_name", all.x = TRUE)
+
+
+#Covert to factor format
+listing2 <- listing2 %>%
+  mutate_if(is.character, as.factor)
+
+#Drop original columns
+listing2 <- listing2 %>% select(-region_parent_name,-region_name.x,-region_name.y,-property_type)
+
+listing2 <- rename(listing2, property_def = Type)
+
+```
+9. Remove missing values
+```{r}
+na.omit(listing2)
+listing3 <- na.omit(listing2)
+
+summary(listing3$price)
+```
+
+10. Processing with outliers
+a. Visualizing the correlation variables with price before removing outliers
+```{r}
+#Visualizing the correlation variables with price
+
+ggplot(listing3, mapping = aes(x= beds, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab("Number of Bedrooms") +
+  labs( title = 'Number of beds with relation to price')
+
+ggplot(listing3, mapping = aes(x= bathroom_number, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab('Number of Bathrooms') +
+  labs(title = 'Number of Bathrooms with relation to price')
+
+ggplot(listing3, mapping = aes(x= accommodates, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab('Maximum people capacity')+
+  labs(title = 'Capacity of listing with relation to price')
+
+ggplot(listing3, mapping = aes(x= bedrooms, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab('Number of Bedrooms') +
+  labs(title = 'Number of bedrooms with relation to price')
+```
+
+
+b. Filtering the number of bathrooms and bedrooms by removing the extreme outliers
+```{r}
+listing3 <- listing3 %>% 
+  filter(listing3$bathroom_number < 10, listing3$bedrooms < 10, listing3$beds < 25)
+
+```
+
+
+c. Visualizing the correlation variables with price after removing outliers
+```{r}
+
+ggplot(listing3, mapping = aes(x= beds, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab("Number of Beds") +
+  labs( title = 'Number of beds with relation to price')
+
+ggplot(listing3, mapping = aes(x= bathroom_number, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab('Number of Bathrooms') +
+  labs(title = 'Number of Bathrooms with relation to price')
+
+ggplot(listing3, mapping = aes(x= accommodates, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab('Maximum people capacity')+
+  labs(title = 'Capacity of listing with relation to price')
+
+ggplot(listing3, mapping = aes(x= bedrooms, y = price)) +
+  geom_point(col = "#FF5A5F") +
+  xlab('Number of Bedrooms') +
+  labs(title = 'Number of bedrooms with relation to price')
+
+```
+
+Separating data to training and tetsing
+```{r}
+
+library(caret)
+set.seed(123)
+listing3 <- na.omit(listing3)
+training.samples <- listing3$id %>% 
+  createDataPartition(p = 0.8, list = FALSE)
+
+train.data  <- listing3[training.samples, ]
+test.data <- listing3[-training.samples, ]
+
+```
+
+Correlation analysis of numeric columns and price
+```{r}
+
+options(scipen = 9999)
+correlations <- cor(train.data %>% select_if(is.numeric), train.data$price, use = "complete.obs")
+
+# print the correlation coefficients
+print(correlations)
+```
+
+Correlation heat map & PCA
+```{r}
+library(factoextra)
+
+numerical_dataset <- train.data[sapply(train.data, is.numeric)]
+
+my_data <- numerical_dataset[, c("price","bedrooms", "accommodates", "bathroom_number", "beds")]
+
+cor_matrix <- cor(my_data, use = 'complete.obs')
+
+print(cor_matrix)
+
+corrplot(cor_matrix, method = 'color', type = 'lower', addCoef.col = 'white')
+
+# PCA
+my_data1 <- numerical_dataset[, c("bedrooms", "accommodates", "bathroom_number", "beds")]
+
+cor_matrix1 <- cor(my_data1, use = 'complete.obs')
+data.pca <- princomp(cor_matrix1, cor = TRUE)
+pca_var <- get_pca_var(data.pca)
+pca_var$contrib
+summary(data.pca)
+
+# Scree Plot
+fviz_eig(data.pca, addlabels = TRUE)
+
+# Biplot of the attributes
+fviz_cos2(data.pca, choice = "var", axes = 1:2)
+fviz_pca_var(data.pca, col.var = "cos2",
+            gradient.cols = c("black", "orange", "green"),
+            repel = TRUE)
+
+```
+
+
+Model building - numeric & categorical
+```{r}
+# Model 1 with numeric variables have correlation greater than 0.3.
+reg1 <- lm(log(price) ~ bathroom_number+ beds, data=train.data)
+summary(reg1)
+par(mfrow = c(2, 2))
+plot(reg1)
+AIC(reg1)
+BIC(reg1) 
+
+# All categorical columns
+factor_cols <- listing3 %>% select(-(is.numeric))
+summary(factor_cols)
+
+# Model 2 with all categorical columns
+reg2 <- lm(log(price) ~ bathroom_number + beds + tourist + property_def + host_response_time + host_is_superhost + room_type + bathroom_type + region_type, data=train.data)
+summary(reg2)
+
+AIC(reg2)
+BIC(reg2)
+
+# Model 3 Drop insignificant variables
+reg3 <- lm(log(price) ~ bathroom_number + beds + tourist + property_def  + host_is_superhost + room_type + bathroom_type + region_type, data=train.data)
+summary(reg3)
+
+AIC(reg3)
+BIC(reg3)
+
+# Model 4 include review_scores_rating + number_of_reviews + amenities
+reg4 <- lm(log(price) ~  bathroom_number + beds + tourist + property_def + room_type + host_is_superhost + bathroom_type + region_type + review_scores_rating + number_of_reviews + amenities, data=train.data)
+summary(reg4)
+
+AIC(reg4)
+BIC(reg4)
+
+# Model 5 Drop host_is_superhost
+reg5 <- lm(log(price) ~  bathroom_number + beds + tourist + property_def  + room_type + bathroom_type + region_type + review_scores_rating + number_of_reviews + amenities, data=train.data)
+summary(reg5)
+
+plot(reg5)
+
+AIC(reg5)
+BIC(reg5)
+```
+
+RMSE testing on regression models
+```{r}
+## define a simple RMSE() function.
+RMSE <- function(obs, pred) {
+  sqrt(mean((obs - pred)^2))
+}
+obs <- test.data$price
+
+## test RMSE
+rmse1 <- RMSE(log(obs), predict(reg1, newdata = test.data))
+rmse2 <- RMSE(log(obs), predict(reg2, newdata = test.data))
+rmse3 <- RMSE(log(obs), predict(reg3, newdata = test.data))
+rmse4 <- RMSE(log(obs), predict(reg4, newdata = test.data))
+rmse5 <- RMSE(log(obs), predict(reg5, newdata = test.data))
+
+
+
+all_rmse <- rbind(c(rmse1, summary(reg1)$r.squared, summary(reg1)$adj.r.squared), 
+                  c(rmse2, summary(reg2)$r.squared, summary(reg2)$adj.r.squared), 
+                  c(rmse3, summary(reg3)$r.squared, summary(reg3)$adj.r.squared),
+                  c(rmse4, summary(reg4)$r.squared, summary(reg4)$adj.r.squared),
+                  c(rmse5, summary(reg5)$r.squared, summary(reg5)$adj.r.squared))
+
+colnames(all_rmse) <- c("Test RMSE", "R-squared", "Adjusted R-squared")
+rownames(all_rmse) <- c("Fit 01:", "Fit 02:","Fit 03:", "Fit 04:","Fit 05:")
+all_rmse
+```
+
+AIC test on regression models
+```{r}
+library(AICcmodavg)
+
+## finally use AIC to find the best model
+## define list of models
+models <- list(reg1, reg2, reg3, reg4,reg5)
+
+## specify model names
+mod.names <- c('reg1', 'reg2', 'reg3', 'reg4','reg5')
+
+## calculate AIC of each model
+aictab(cand.set = models, modnames = mod.names)
+```
+
+Prediction test on final model
+```{r}
+# Model 5
+predictions5 <- reg5 %>% predict(test.data)
+
+# Model accuracy
+# RMSE - between 0.2 to 0.5. The lower the better
+RMSE(predictions5, log(test.data$price))
+
+#transfer to original price scale
+obs_test <- test.data$price
+preds <- exp(predictions5)
+RMSE(obs_test,preds)
+
+R2(predictions5, log(test.data$price))
+
+
+#RMSE on train.data
+
+predictions_train <- reg5 %>% predict(train.data)
+
+RMSE(predictions_train, log(train.data$price))
+
+#transfer to original price scale
+obs_train <- train.data$price
+preds_train <- exp(predictions_train)
+RMSE(obs_train,preds_train)
+
+```
+
+Prediction result transformation
+```{r}
+pred_PI <- exp(predict(reg5, newdata = test.data, interval = 'prediction'))
+head(pred_PI)
+
+pred_PI_df <- as.data.frame(pred_PI)
+pred_PI_df$Actual <- test.data$price
+head(pred_PI_df)
+```
+
+Prediction plot
+```{r}
+ggplot(pred_PI_df, aes(x = fit, y = Actual)) +
+  geom_point() + geom_smooth(method = "lm", color = "#FF5A5F") +
+  scale_x_continuous(limits = c(0, 3000), labels = scales::label_number_si()) +
+  scale_y_continuous(limits = c(0, 3000), labels = scales::label_number_si()) +
+  labs(title = "Predicted Vs. Actual Airbnb Listing Price", 
+       caption = "Source: Businfo707 Group Project",
+       x = "Actual Listing Price", 
+       y = "Predicted Listing Price") +
+  theme(plot.title.position = "plot", 
+        plot.caption.position = "plot",
+        plot.title = element_text(hjust = 0.5, lineheight = 1.2, margin = margin(0, 0, 10, 0)),
+        panel.grid.major.x = element_line(colour = "grey90"),
+        panel.grid.minor.x = element_line(colour = "grey90"),
+        panel.grid.minor.y = element_line(colour = "grey90"),
+        panel.grid.major.y = element_line(colour = "grey90"),
+        axis.ticks.y = element_line(colour = "grey85"),
+        axis.ticks.x = element_line(colour = "grey85"), 
+        panel.background = element_rect(fill = "white"), 
+        plot.background = element_rect(fill = "white"))
+
+```
+
+
