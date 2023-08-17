@@ -1,3 +1,3 @@
-# Airbnb_NZ_Marketing_Analytics
+# Airbnb NZ Marketing Analytics
 
 This project report aims to use machine learning techniques to identify trends within the New Zealand Airbnb dataset from Inside Airbnb. Data collected from Airbnb shows that listings from Airbnb are majorly homes, which are disrupting housing and communities despite Airbnb’s claims that they are a part of the sharing economy (Zervas et al., 2017). In this report, an analysis of the listings’ detailed information on Airbnb within New Zealand will be explored to indicate what influences Airbnb property prices potentially. Thus, this report set the following hypothesis (null) that listing details such as the number of bedrooms, location, and amenities have no influence on the listing price. 
